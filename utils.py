@@ -11,6 +11,14 @@ def parse_label(xml_file):
         print('Failed to parse: ' + xml_file, file=sys.stderr)
         return None
     root = tree.getroot()
+    w_scale=1
+    h_scale=1
+    for x in root.iter('width'):
+        if int(x.text) < 333:
+            w_scale=333/float(x.text)
+    for x in root.iter('height'):
+        if int(x.text) < 333:
+            h_scale=333/float(x.text)
     category=[]
     xmin=[]
     ymin=[]
@@ -19,15 +27,15 @@ def parse_label(xml_file):
     for x in root.iter('name'):
         category.append(x.text)
     for x in root.iter('xmin'):
-        xmin.append(x.text)
+        xmin.append(int(x.text)*w_scale)
     for x in root.iter('ymin'):
-        ymin.append(x.text)
+        ymin.append(int(x.text)*h_scale)
     for x in root.iter('xmax'):
-        xmax.append(x.text)
+        xmax.append(int(x.text)*w_scale)
     for x in root.iter('ymax'):
-        ymax.append(x.text)
+        ymax.append(int(x.text)*h_scale)
     gt_boxes=[list(box) for box in zip(xmin,ymin,xmax,ymax)]
-    return category, np.asarray(gt_boxes, np.float)
+    return category, np.asarray(gt_boxes, np.float), (h_scale,w_scale)
 
 
 def loss_cls(y_true, y_pred):

@@ -1,3 +1,4 @@
+import traceback
 import numpy as np
 import numpy.random as npr
 from keras.layers import Conv2D
@@ -47,10 +48,11 @@ x = img_to_array(img)
 x = np.expand_dims(x, axis=0)
 not_used=pretrained_model.predict(x)
 
-def produce_batch(filepath, gt_boxes):
+def produce_batch(filepath, gt_boxes, scale):
     img=load_img(filepath)
-    img_width=np.shape(img)[1]
-    img_height=np.shape(img)[0]
+    img_width=np.shape(img)[1] * scale[1]
+    img_height=np.shape(img)[0] * scale[0]
+    img=img.resize((int(img_width),int(img_height)))
     #feed image to pretrained model and get feature map
     img = img_to_array(img)
     img = np.expand_dims(img, axis=0)
@@ -150,32 +152,43 @@ img_path=ILSVRC_dataset_path+'Data/DET/train/'
 anno_path=ILSVRC_dataset_path+'/Annotations/DET/train/'
 import glob
 
-BATCH_SIZE=256
+BATCH_SIZE=512
 def input_generator():
     batch_tiles=[]
     batch_labels=[]
     batch_bboxes=[]
+    count=0
     while 1:
         for fname in glob.glob(ILSVRC_dataset_path+'/ImageSets/DET/train_*'):
             with open(fname,'r') as f:
                 for line in f:
                     if 'extra' not in line:
                         try:
-                            category, gt_boxes = parse_label(anno_path+line.split()[0]+'.xml')
-                            tiles, labels, bboxes = produce_batch(img_path+line.split()[0]+'.JPEG', gt_boxes)
+                            category, gt_boxes, scale = parse_label(anno_path+line.split()[0]+'.xml')
+                            if len(gt_boxes)==0:
+                                continue
+                            tiles, labels, bboxes = produce_batch(img_path+line.split()[0]+'.JPEG', gt_boxes, scale)
                         except Exception:
                             print('parse label or produce batch failed: for: '+line.split()[0])
+                            traceback.print_exc()
                             continue
                         for i in range(len(tiles)):
                             batch_tiles.append(tiles[i])
                             batch_labels.append(labels[i])
                             batch_bboxes.append(bboxes[i])
                             if(len(batch_tiles)==BATCH_SIZE):
-                                yield np.asarray(batch_tiles), [np.asarray(batch_labels), np.asarray(batch_bboxes)]
+                                a=np.asarray(batch_tiles)
+                                b=np.asarray(batch_labels)
+                                c=np.asarray(batch_bboxes)
+                                if not a.any() or not b.any() or not c.any():
+                                    print("empty array found.")
+                                
+                                yield a, [b, c]
                                 batch_tiles=[]
                                 batch_labels=[]
                                 batch_bboxes=[]
 
 
-
-model.fit_generator(input_generator(), steps_per_epoch=388448, epochs=1)
+from keras.callbacks import ModelCheckpoint
+checkpointer = ModelCheckpoint(filepath='./weights.hdf5', verbose=1, save_best_only=True)
+model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=800, callbacks=[checkpointer])
