@@ -13,11 +13,17 @@ def parse_label(xml_file):
     root = tree.getroot()
     w_scale=1
     h_scale=1
+    width=0
+    height=0
     for x in root.iter('width'):
-        if int(x.text) < 333:
+        width=int(x.text)
+        if width < 333:
+            width=333
             w_scale=333/float(x.text)
     for x in root.iter('height'):
-        if int(x.text) < 333:
+        height==int(x.text)
+        if height < 333:
+            height=333
             h_scale=333/float(x.text)
     category=[]
     xmin=[]
@@ -35,7 +41,7 @@ def parse_label(xml_file):
     for x in root.iter('ymax'):
         ymax.append(int(x.text)*h_scale)
     gt_boxes=[list(box) for box in zip(xmin,ymin,xmax,ymax)]
-    return category, np.asarray(gt_boxes, np.float), (h_scale,w_scale)
+    return category, np.asarray(gt_boxes, np.float), (height, width)
 
 
 def loss_cls(y_true, y_pred):
@@ -50,16 +56,16 @@ def loss_cls(y_true, y_pred):
     target = K.tf.gather_nd(y_true, indices)
     output = K.tf.gather_nd(output_scores, indices)
     loss = K.binary_crossentropy(target, output)
-    return loss
+    return K.mean(loss)
 
 
 def smoothL1(y_true, y_pred):
     nd=K.tf.where(K.tf.not_equal(y_true,0))
     y_true=K.tf.gather_nd(y_true,nd)
     y_pred=K.tf.gather_nd(y_pred,nd)
-    x   = K.tf.losses.huber_loss(y_true,y_pred)
+    x = K.tf.losses.huber_loss(y_true,y_pred)
 #     x   = K.switch(x < HUBER_DELTA, 0.5 * x ** 2, HUBER_DELTA * (x - 0.5 * HUBER_DELTA))
-    return  K.sum(x)
+    return x*4
 
 
 def draw_anchors(img_path, anchors, pad_size=50):

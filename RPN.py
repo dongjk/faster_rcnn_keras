@@ -1,7 +1,8 @@
+import os
 import traceback
 import numpy as np
 import numpy.random as npr
-from keras.layers import Conv2D
+from keras.layers import Conv2D, BatchNormalization
 from keras.models import Input, Model
 from keras.applications import InceptionResNetV2
 from keras.preprocessing.image import load_img, img_to_array
@@ -17,6 +18,8 @@ convolution_3x3 = Conv2D(
     padding='same',
     name="3x3"
 )(feature_map_tile)
+
+convolution_3x3=BatchNormalization()(convolution_3x3)
 
 output_deltas = Conv2D(
     filters= 4 * k,
@@ -48,21 +51,15 @@ x = img_to_array(img)
 x = np.expand_dims(x, axis=0)
 not_used=pretrained_model.predict(x)
 
-def produce_batch(filepath, gt_boxes, scale):
-    img=load_img(filepath)
-    img_width=np.shape(img)[1] * scale[1]
-    img_height=np.shape(img)[0] * scale[0]
-    img=img.resize((int(img_width),int(img_height)))
-    #feed image to pretrained model and get feature map
-    img = img_to_array(img)
-    img = np.expand_dims(img, axis=0)
-    feature_map=pretrained_model.predict(img)
+def produce_batch(filepath, gt_boxes, h_w):
+    feature_map=np.load(filepath)['fc']
+    print(np.shape(feature_map))
     height = np.shape(feature_map)[1]
     width = np.shape(feature_map)[2]
     num_feature_map=width*height
     #calculate output w, h stride
-    w_stride = img_width / width
-    h_stride = img_height / height
+    w_stride = h_w[1] / width
+    h_stride = h_w[0] / height
     #generate base anchors according output stride.
     #base anchors are 9 anchors wrt a tile (0,0,w_stride-1,h_stride-1)
     base_anchors=generate_anchors(w_stride,h_stride)
@@ -83,8 +80,8 @@ def produce_batch(filepath, gt_boxes, scale):
     inds_inside = np.where(
             (all_anchors[:, 0] >= -border) &
             (all_anchors[:, 1] >= -border) &
-            (all_anchors[:, 2] < img_width+border ) &  # width
-            (all_anchors[:, 3] < img_height+border)    # height
+            (all_anchors[:, 2] < h_w[1]+border ) &  # width
+            (all_anchors[:, 3] < h_w[0]+border)    # height
     )[0]
     anchors=all_anchors[inds_inside]
     # calculate overlaps each anchors to each gt boxes, 
@@ -150,6 +147,7 @@ def produce_batch(filepath, gt_boxes, scale):
 ILSVRC_dataset_path='/home/jk/wi/ILSVRC/'
 img_path=ILSVRC_dataset_path+'Data/DET/train/'
 anno_path=ILSVRC_dataset_path+'/Annotations/DET/train/'
+feature_map_path='/home/jk/faster_rcnn/feature_maps/'
 import glob
 
 BATCH_SIZE=512
@@ -163,11 +161,15 @@ def input_generator():
             with open(fname,'r') as f:
                 for line in f:
                     if 'extra' not in line:
+                        feature_map_file=feature_map_path+line.split()[0]
+                        if not os.path.exists(feature_map_file):
+                            continue
+
                         try:
-                            category, gt_boxes, scale = parse_label(anno_path+line.split()[0]+'.xml')
+                            category, gt_boxes, h_w = parse_label(anno_path+line.split()[0]+'.xml')
                             if len(gt_boxes)==0:
                                 continue
-                            tiles, labels, bboxes = produce_batch(img_path+line.split()[0]+'.JPEG', gt_boxes, scale)
+                            tiles, labels, bboxes = produce_batch(feature_map_file, gt_boxes, h_w)
                         except Exception:
                             print('parse label or produce batch failed: for: '+line.split()[0])
                             traceback.print_exc()
@@ -182,7 +184,6 @@ def input_generator():
                                 c=np.asarray(batch_bboxes)
                                 if not a.any() or not b.any() or not c.any():
                                     print("empty array found.")
-                                
                                 yield a, [b, c]
                                 batch_tiles=[]
                                 batch_labels=[]
@@ -190,5 +191,5 @@ def input_generator():
 
 
 from keras.callbacks import ModelCheckpoint
-checkpointer = ModelCheckpoint(filepath='./weights.hdf5', verbose=1, save_best_only=True)
-model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=800, callbacks=[checkpointer])
+checkpointer = ModelCheckpoint(filepath='./weights.hdf5', monitor='loss', verbose=1, save_best_only=True)
+model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=100, callbacks=[checkpointer])
