@@ -12,14 +12,14 @@ from utils import generate_anchors, draw_anchors, bbox_overlaps, bbox_transform,
 k=9 #anchor number for each point
 ##################  RPN Model  #######################
 feature_map_tile = Input(shape=(None,None,1536))
-convolution_3x3 = Conv2D(
-    filters=512,
-    kernel_size=(3, 3),
+convolution_1x1 = Conv2D(
+    filters=2048,
+    kernel_size=(1, 1),
     padding='same',
-    name="3x3"
+    name="1x1"
 )(feature_map_tile)
 
-convolution_3x3=BatchNormalization()(convolution_3x3)
+convolution_1x1=BatchNormalization()(convolution_1x1)
 
 output_deltas = Conv2D(
     filters= 4 * k,
@@ -27,7 +27,7 @@ output_deltas = Conv2D(
     activation="linear",
     kernel_initializer="uniform",
     name="deltas1"
-)(convolution_3x3)
+)(convolution_1x1)
 
 output_scores = Conv2D(
     filters=1 * k,
@@ -35,25 +35,24 @@ output_scores = Conv2D(
     activation="sigmoid",
     kernel_initializer="uniform",
     name="scores1"
-)(convolution_3x3)
+)(convolution_1x1)
 
 model = Model(inputs=[feature_map_tile], outputs=[output_scores, output_deltas])
-model.compile(optimizer='adam', loss={'scores1':loss_cls, 'deltas1':smoothL1})
+model.compile(optimizer='sgd', loss={'scores1':loss_cls, 'deltas1':smoothL1})
 
 ##################  prepare batch  #######################
 BG_FG_FRAC=2
 
 #load an example to void graph problem
 #TODO fix this.
-pretrained_model = InceptionResNetV2(include_top=False)
-img=load_img("./ILSVRC2014_train_00010391.JPEG")
-x = img_to_array(img)
-x = np.expand_dims(x, axis=0)
-not_used=pretrained_model.predict(x)
+# pretrained_model = InceptionResNetV2(include_top=False)
+# img=load_img("./ILSVRC2014_train_00010391.JPEG")
+# x = img_to_array(img)
+# x = np.expand_dims(x, axis=0)
+# not_used=pretrained_model.predict(x)
 
 def produce_batch(filepath, gt_boxes, h_w):
     feature_map=np.load(filepath)['fc']
-    print(np.shape(feature_map))
     height = np.shape(feature_map)[1]
     width = np.shape(feature_map)[2]
     num_feature_map=width*height
@@ -134,14 +133,15 @@ def produce_batch(filepath, gt_boxes, h_w):
     bbox_targets = bbox_transform(pos_anchors, gt_boxes[argmax_overlaps, :][labels==1])
     bbox_targets = unmap(bbox_targets, total_anchors, inds_inside[labels==1], fill=0)
     batch_bbox_targets = bbox_targets.reshape(-1,1,1,4*k)[batch_inds]
-    padded_fcmap=np.pad(feature_map,((0,0),(1,1),(1,1),(0,0)),mode='constant')
-    padded_fcmap=np.squeeze(padded_fcmap)
+    # padded_fcmap=np.pad(feature_map,((0,0),(1,1),(1,1),(0,0)),mode='constant')
+    # padded_fcmap=np.squeeze(padded_fcmap)
+    feature_map = np.squeeze(feature_map)
     batch_tiles=[]
     for ind in batch_inds:
         x = ind % width
         y = int(ind/width)
-        fc_3x3=padded_fcmap[y:y+3,x:x+3,:]
-        batch_tiles.append(fc_3x3)
+        fc_1x1=feature_map[y:y+1,x:x+1,:]
+        batch_tiles.append(fc_1x1)
     return np.asarray(batch_tiles), batch_label_targets.tolist(), batch_bbox_targets.tolist()
 
 ILSVRC_dataset_path='/home/jk/wi/ILSVRC/'
@@ -150,7 +150,7 @@ anno_path=ILSVRC_dataset_path+'/Annotations/DET/train/'
 feature_map_path='/home/jk/faster_rcnn/feature_maps/'
 import glob
 
-BATCH_SIZE=512
+BATCH_SIZE=4096
 def input_generator():
     batch_tiles=[]
     batch_labels=[]
@@ -171,8 +171,8 @@ def input_generator():
                                 continue
                             tiles, labels, bboxes = produce_batch(feature_map_file, gt_boxes, h_w)
                         except Exception:
-                            print('parse label or produce batch failed: for: '+line.split()[0])
-                            traceback.print_exc()
+                            # print('parse label or produce batch failed: for: '+line.split()[0])
+                            # traceback.print_exc()
                             continue
                         for i in range(len(tiles)):
                             batch_tiles.append(tiles[i])
