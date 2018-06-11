@@ -144,52 +144,71 @@ def produce_batch(filepath, gt_boxes, h_w):
         batch_tiles.append(fc_1x1)
     return np.asarray(batch_tiles), batch_label_targets.tolist(), batch_bbox_targets.tolist()
 
-ILSVRC_dataset_path='/home/jk/wi/ILSVRC/'
+ILSVRC_dataset_path='/home/jk/faster_rcnn/'
 img_path=ILSVRC_dataset_path+'Data/DET/train/'
-anno_path=ILSVRC_dataset_path+'/Annotations/DET/train/'
+anno_path=ILSVRC_dataset_path+'Annotations/DET/train/'
 feature_map_path='/home/jk/faster_rcnn/feature_maps/'
 import glob
+from multiprocessing import Process, Queue
 
 BATCH_SIZE=4096
-def input_generator():
+def worker(path, q):
+    print('worker start')
     batch_tiles=[]
     batch_labels=[]
     batch_bboxes=[]
+    #'/ImageSets/DET/train_*'
+    for fname in glob.glob(ILSVRC_dataset_path+path):
+        print(fname)
+        with open(fname,'r') as f:
+            for line in f:
+                if 'extra' not in line:
+                    feature_map_file=feature_map_path+line.split()[0]
+                    if not os.path.exists(feature_map_file):
+                        continue
+
+                    try:
+                        category, gt_boxes, h_w = parse_label(anno_path+line.split()[0]+'.xml')
+                        if len(gt_boxes)==0:
+                            continue
+                        tiles, labels, bboxes = produce_batch(feature_map_file, gt_boxes, h_w)
+                    except Exception:
+                        print('parse label or produce batch failed: for: '+line.split()[0])
+                        traceback.print_exc()
+                        continue
+                    for i in range(len(tiles)):
+                        batch_tiles.append(tiles[i])
+                        batch_labels.append(labels[i])
+                        batch_bboxes.append(bboxes[i])
+                        if(len(batch_tiles)==BATCH_SIZE):
+                            a=np.asarray(batch_tiles)
+                            b=np.asarray(batch_labels)
+                            c=np.asarray(batch_bboxes)
+                            if not a.any() or not b.any() or not c.any():
+                                print("empty array found.")
+                            q.put([a,b,c])
+                            batch_tiles=[]
+                            batch_labels=[]
+                            batch_bboxes=[]
+
+q = Queue(20)
+
+p1 = Process(target=worker, args=('/ImageSets/DET/train_*[0-1].txt',q))
+p1.start()
+p2 = Process(target=worker, args=('/ImageSets/DET/train_*[2-3].txt',q))
+p2.start()
+p3 = Process(target=worker, args=('/ImageSets/DET/train_*[4-6].txt',q))
+p3.start()
+p4 = Process(target=worker, args=('/ImageSets/DET/train_*[7-9].txt',q))
+p4.start()
+
+def input_generator():
     count=0
     while 1:
-        for fname in glob.glob(ILSVRC_dataset_path+'/ImageSets/DET/train_*'):
-            with open(fname,'r') as f:
-                for line in f:
-                    if 'extra' not in line:
-                        feature_map_file=feature_map_path+line.split()[0]
-                        if not os.path.exists(feature_map_file):
-                            continue
+        batch = q.get()
+        yield batch[0], [batch[1], batch[2]]
 
-                        try:
-                            category, gt_boxes, h_w = parse_label(anno_path+line.split()[0]+'.xml')
-                            if len(gt_boxes)==0:
-                                continue
-                            tiles, labels, bboxes = produce_batch(feature_map_file, gt_boxes, h_w)
-                        except Exception:
-                            # print('parse label or produce batch failed: for: '+line.split()[0])
-                            # traceback.print_exc()
-                            continue
-                        for i in range(len(tiles)):
-                            batch_tiles.append(tiles[i])
-                            batch_labels.append(labels[i])
-                            batch_bboxes.append(bboxes[i])
-                            if(len(batch_tiles)==BATCH_SIZE):
-                                a=np.asarray(batch_tiles)
-                                b=np.asarray(batch_labels)
-                                c=np.asarray(batch_bboxes)
-                                if not a.any() or not b.any() or not c.any():
-                                    print("empty array found.")
-                                yield a, [b, c]
-                                batch_tiles=[]
-                                batch_labels=[]
-                                batch_bboxes=[]
-
-
+model.load_weights('./weights.hdf5')
 from keras.callbacks import ModelCheckpoint
-checkpointer = ModelCheckpoint(filepath='./weights.hdf5', monitor='loss', verbose=1, save_best_only=True)
+checkpointer = ModelCheckpoint(filepath='./weights_mc.hdf5', monitor='loss', verbose=1, save_best_only=True)
 model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=100, callbacks=[checkpointer])

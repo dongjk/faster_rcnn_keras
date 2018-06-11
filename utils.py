@@ -45,7 +45,6 @@ def parse_label(xml_file):
 
 
 def loss_cls(y_true, y_pred):
-    print(y_true,y_pred)
     output_scores = K.reshape(y_pred, (1, -1))
     y_true = K.reshape(y_true, (1, -1))
 
