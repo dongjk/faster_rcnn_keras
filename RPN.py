@@ -2,6 +2,7 @@ import os
 import traceback
 import numpy as np
 import numpy.random as npr
+import keras.backend as K
 from keras.layers import Conv2D, BatchNormalization
 from keras.models import Input, Model
 from keras.applications import InceptionResNetV2
@@ -12,14 +13,14 @@ from utils import generate_anchors, draw_anchors, bbox_overlaps, bbox_transform,
 k=9 #anchor number for each point
 ##################  RPN Model  #######################
 feature_map_tile = Input(shape=(None,None,1536))
-convolution_1x1 = Conv2D(
+convolution_3x3 = Conv2D(
     filters=2048,
-    kernel_size=(1, 1),
+    kernel_size=(3, 3),
     padding='same',
-    name="1x1"
+    name="3x3"
 )(feature_map_tile)
 
-convolution_1x1=BatchNormalization()(convolution_1x1)
+convolution_3x3=BatchNormalization()(convolution_3x3)
 
 output_deltas = Conv2D(
     filters= 4 * k,
@@ -27,21 +28,20 @@ output_deltas = Conv2D(
     activation="linear",
     kernel_initializer="uniform",
     name="deltas1"
-)(convolution_1x1)
+)(convolution_3x3)
 
 output_scores = Conv2D(
     filters=1 * k,
     kernel_size=(1, 1),
     activation="sigmoid",
-    kernel_initializer="uniform",
+    kernel_initializer="glorot_normal",
     name="scores1"
-)(convolution_1x1)
-
+)(convolution_3x3)
 model = Model(inputs=[feature_map_tile], outputs=[output_scores, output_deltas])
-model.compile(optimizer='sgd', loss={'scores1':loss_cls, 'deltas1':smoothL1})
+model.compile(optimizer='rmsprop', loss={'deltas1':smoothL1, 'scores1':loss_cls})
 
 ##################  prepare batch  #######################
-BG_FG_FRAC=2
+BG_FG_FRAC=3
 
 #load an example to void graph problem
 #TODO fix this.
@@ -53,6 +53,7 @@ BG_FG_FRAC=2
 
 def produce_batch(filepath, gt_boxes, h_w):
     feature_map=np.load(filepath)['fc']
+    # feature_map=feature_map.repeat(3, axis=1).repeat(3, axis=2)
     height = np.shape(feature_map)[1]
     width = np.shape(feature_map)[2]
     num_feature_map=width*height
@@ -75,7 +76,7 @@ def produce_batch(filepath, gt_boxes, h_w):
     total_anchors = num_feature_map*9
     all_anchors = all_anchors.reshape((total_anchors, 4))
     #only keep anchors inside image+borader.
-    border=0
+    border=10
     inds_inside = np.where(
             (all_anchors[:, 0] >= -border) &
             (all_anchors[:, 1] >= -border) &
@@ -104,10 +105,10 @@ def produce_batch(filepath, gt_boxes, h_w):
     # anchor/anchors with the highest Intersection-overUnion
     # (IoU) overlap with a ground-truth box, or (ii) an
     # anchor that has an IoU overlap higher than 0.7 with any gt boxes
-    labels[gt_argmax_overlaps] = 1
     labels[max_overlaps >= .7] = 1
-    # set negative labels
+    labels[gt_argmax_overlaps] = 1
     labels[max_overlaps <= .3] = 0
+    # set negative labels
     # subsample positive labels if we have too many
 #     num_fg = int(RPN_FG_FRACTION * RPN_BATCHSIZE)
     fg_inds = np.where(labels == 1)[0]
@@ -133,14 +134,13 @@ def produce_batch(filepath, gt_boxes, h_w):
     bbox_targets = bbox_transform(pos_anchors, gt_boxes[argmax_overlaps, :][labels==1])
     bbox_targets = unmap(bbox_targets, total_anchors, inds_inside[labels==1], fill=0)
     batch_bbox_targets = bbox_targets.reshape(-1,1,1,4*k)[batch_inds]
-    # padded_fcmap=np.pad(feature_map,((0,0),(1,1),(1,1),(0,0)),mode='constant')
-    # padded_fcmap=np.squeeze(padded_fcmap)
-    feature_map = np.squeeze(feature_map)
+    padded_fcmap=np.pad(feature_map,((0,0),(1,1),(1,1),(0,0)),mode='constant')
+    padded_fcmap=np.squeeze(padded_fcmap)
     batch_tiles=[]
     for ind in batch_inds:
         x = ind % width
         y = int(ind/width)
-        fc_1x1=feature_map[y:y+1,x:x+1,:]
+        fc_1x1=padded_fcmap[y:y+3,x:x+3,:]
         batch_tiles.append(fc_1x1)
     return np.asarray(batch_tiles), batch_label_targets.tolist(), batch_bbox_targets.tolist()
 
@@ -151,7 +151,7 @@ feature_map_path='/home/jk/faster_rcnn/feature_maps/'
 import glob
 from multiprocessing import Process, Queue
 
-BATCH_SIZE=4096
+BATCH_SIZE=256
 def worker(path, q):
     print('worker start')
     batch_tiles=[]
@@ -208,7 +208,7 @@ def input_generator():
         batch = q.get()
         yield batch[0], [batch[1], batch[2]]
 
-model.load_weights('./weights.hdf5')
+# model.load_weights('./weights.hdf5')
 from keras.callbacks import ModelCheckpoint
-checkpointer = ModelCheckpoint(filepath='./weights_mc.hdf5', monitor='loss', verbose=1, save_best_only=True)
-model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=100, callbacks=[checkpointer])
+checkpointer = ModelCheckpoint(filepath='./weights_3x3_3.hdf5', monitor='loss', verbose=1, save_best_only=True)
+model.fit_generator(input_generator(), steps_per_epoch=3000, epochs=100, callbacks=[checkpointer])
