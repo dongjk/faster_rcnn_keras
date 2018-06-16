@@ -10,13 +10,16 @@ from keras.models import Input, Model, Layer
 from keras.applications import InceptionResNetV2
 from keras.preprocessing.image import load_img, img_to_array
 from utils import generate_anchors, draw_anchors, bbox_overlaps, bbox_transform,\
-                    loss_cls, smoothL1, parse_label, unmap, filter_boxes, \
+                    loss_cls,  parse_label, unmap, filter_boxes, \
                     clip_boxes, py_cpu_nms, bbox_transform_inv
 
-rpn_model = load_model('weights_3x3.hdf5',
-            custom_objects={'loss_cls': loss_cls,'smoothL1':smoothL1})
-x=rpn_model.predict(np.load('n02676566_6914')['fc'])
-print(x[1].shape)
+# rpn_model = load_model('weights_3x3.hdf5',
+#             custom_objects={'loss_cls': loss_cls,'smoothL1':smoothL1})
+# x=rpn_model.predict(np.load('n02676566_6914')['fc'])
+# rpn_model2 = load_model('weights_3x3.hdf5',
+#             custom_objects={'loss_cls': loss_cls,'smoothL1':smoothL1})
+# x=rpn_model2.predict(np.load('n02676566_6914')['fc'])
+# print(x[1].shape)
 
 ##################  R-CNN Model  #######################
 # RoI Pooling layer
@@ -73,13 +76,25 @@ output_scores = Dense(
         name="scores2"
     )(fc1)
 
-model=Model(inputs=[feature_map, rois, ind],outputs=[output_scores,output_deltas])
-model.summary()
-model.compile(optimizer='rmsprop', 
-            loss={'deltas2':smoothL1, 'scores2':'categorical_crossentropy'})
+graph1 = tf.Graph()
+with graph1.as_default():
+    session1 = tf.Session()
+    with session1.as_default():
+        def smoothL1(y_true, y_pred):
+            nd=K.tf.where(K.tf.not_equal(y_true,0))
+            y_true=K.tf.gather_nd(y_true,nd)
+            y_pred=K.tf.gather_nd(y_pred,nd)
+            x = K.tf.losses.huber_loss(y_true,y_pred)
+        #     x   = K.switch(x < HUBER_DELTA, 0.5 * x ** 2, HUBER_DELTA * (x - 0.5 * HUBER_DELTA))
+            return x*4
+        model=Model(inputs=[feature_map, rois, ind],outputs=[output_scores,output_deltas])
+        model.summary()
+        model.compile(optimizer='rmsprop', 
+                    loss={'deltas2':'mse', 'scores2':'categorical_crossentropy'})
 
 ##################  prepare batch  #######################
-
+from wrap import CNN
+rpn_model=CNN()
 FG_FRAC=.25
 FG_THRESH=.5
 BG_THRESH_HI=.5
@@ -108,7 +123,7 @@ def produce_batch(feature_map, gt_boxes, h_w, category):
     total_anchors = num_feature_map*9
     all_anchors = all_anchors.reshape((total_anchors, 4))
     # feed feature map to pretrained RPN model, get proposal labels and bboxes.
-    res=rpn_model.predict(feature_map)
+    res=rpn_model.query_cnn(feature_map)
     scores=res[0]
     scores=scores.reshape(-1,1)
     deltas=res[1]
@@ -208,7 +223,7 @@ def worker(path, q):
                         _, gt_boxes, h_w = parse_label(anno_path+line.split()[0]+'.xml')
                         if len(gt_boxes)==0:
                             continue
-                        rois, bboxes, categories = produce_batch(feature_map, gt_boxes, h_w, category)
+                        rois, bboxes, categories = produce_batch(feature_map, gt_boxes, h_w,category)
                     except Exception:
                         print('parse label or produce batch failed: for: '+line.split()[0])
                         traceback.print_exc()
@@ -228,7 +243,8 @@ def worker(path, q):
                     e=np.asarray(batch_bboxes)
                     f=np.zeros((len(rois),a.shape[1],a.shape[2],a.shape[3]))
                     f[0]=feature_map[0]
-                    yield [f,b,c], [d,e]
+                    q.put([a,b,c,d,e])
+                    # yield [f,b,c], [d,e]
                     batch_rois=[]
                     batch_featuremap_inds=[]
                     batch_categories=[]
@@ -239,10 +255,10 @@ def worker(path, q):
 
 q = Queue(20)
 
-# p1 = Process(target=worker, args=('/ImageSets/DET/train_*[0-1].txt',q))
-# p1.start()
-# p2 = Process(target=worker, args=('/ImageSets/DET/train_*[2-3].txt',q))
-# p2.start()
+p1 = Process(target=worker, args=('/ImageSets/DET/train_*[0-1].txt',q))
+p1.start()
+p2 = Process(target=worker, args=('/ImageSets/DET/train_*[2-3].txt',q))
+p2.start()
 # p3 = Process(target=worker, args=('/ImageSets/DET/train_*[4-6].txt',q))
 # p3.start()
 # p4 = Process(target=worker, args=('/ImageSets/DET/train_*[7-9].txt',q))
@@ -250,10 +266,11 @@ q = Queue(20)
 
 def input_generator():
     while 1:
-        batch = worker('/ImageSets/DET/train_*[0-1].txt',q)
+        batch = q.get()
         yield [batch[0], batch[1], batch[2]], [batch[3], batch[4]]
 
 # model.load_weights('./weights.hdf5')
 from keras.callbacks import ModelCheckpoint
 checkpointer = ModelCheckpoint(filepath='./rcnn_weights_1.hdf5', monitor='loss', verbose=1, save_best_only=True)
-model.fit_generator(worker('/ImageSets/DET/train_*[0-1].txt',q), steps_per_epoch=3000, epochs=100, callbacks=[checkpointer])
+with session1.as_default():
+    model.fit_generator(input_generator(), steps_per_epoch=3000, epochs=100, callbacks=[checkpointer])
