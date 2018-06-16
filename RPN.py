@@ -40,16 +40,8 @@ output_scores = Conv2D(
 model = Model(inputs=[feature_map_tile], outputs=[output_scores, output_deltas])
 model.compile(optimizer='rmsprop', loss={'deltas1':smoothL1, 'scores1':loss_cls})
 
-##################  prepare batch  #######################
+##################  data preprocessing function  #######################
 BG_FG_FRAC=3
-
-#load an example to void graph problem
-#TODO fix this.
-# pretrained_model = InceptionResNetV2(include_top=False)
-# img=load_img("./ILSVRC2014_train_00010391.JPEG")
-# x = img_to_array(img)
-# x = np.expand_dims(x, axis=0)
-# not_used=pretrained_model.predict(x)
 
 def produce_batch(filepath, gt_boxes, h_w):
     feature_map=np.load(filepath)['fc']
@@ -144,6 +136,7 @@ def produce_batch(filepath, gt_boxes, h_w):
         batch_tiles.append(fc_1x1)
     return np.asarray(batch_tiles), batch_label_targets.tolist(), batch_bbox_targets.tolist()
 
+##################  multi process data generate  #######################
 ILSVRC_dataset_path='/home/jk/faster_rcnn/'
 img_path=ILSVRC_dataset_path+'Data/DET/train/'
 anno_path=ILSVRC_dataset_path+'Annotations/DET/train/'
@@ -166,7 +159,6 @@ def worker(path, q):
                     feature_map_file=feature_map_path+line.split()[0]
                     if not os.path.exists(feature_map_file):
                         continue
-
                     try:
                         category, gt_boxes, h_w = parse_label(anno_path+line.split()[0]+'.xml')
                         if len(gt_boxes)==0:
@@ -202,6 +194,7 @@ p3.start()
 p4 = Process(target=worker, args=('/ImageSets/DET/train_*[7-9].txt',q))
 p4.start()
 
+##################  start training  #######################
 def input_generator():
     count=0
     while 1:

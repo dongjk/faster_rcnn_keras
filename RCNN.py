@@ -30,7 +30,8 @@ class RoIPooling(Layer):
         super(RoIPooling, self).build(input_shape)
 
     def call(self, inputs, **kwargs):
-        x = K.tf.image.crop_and_resize(inputs[0], inputs[1], inputs[2], self.size)
+        ind=K.reshape(inputs[2],(-1,))
+        x = K.tf.image.crop_and_resize(inputs[0], inputs[1], ind, self.size)
         return x
 
     def compute_output_shape(self, input_shape):
@@ -44,8 +45,8 @@ class RoIPooling(Layer):
 BATCH=128
 
 feature_map=Input(batch_shape=(None,None,None,1536))
-rois=Input(batch_shape=(BATCH, 4))
-ind=Input(batch_shape=(BATCH,),dtype='int32')
+rois=Input(batch_shape=(None, 4))
+ind=Input(batch_shape=(None, 1),dtype='int32')
 
 p1=RoIPooling()([feature_map, rois, ind])
 
@@ -163,16 +164,16 @@ def produce_batch(feature_map, gt_boxes, h_w, category):
     gt_rois=gt_boxes[gt_assignment[keep_inds]]
     targets = bbox_transform(rois, gt_rois)#input rois
     rois_num=targets.shape[0]
-    batch_rois=np.zeros((rois_num, 200, 4))
+    batch_box=np.zeros((rois_num, 200, 4))
     for i in range(rois_num):
-        batch_rois[i, category] = targets[i]
-    batch_rois = np.reshape(batch_rois, (rois_num, -1))
+        batch_box[i, category] = targets[i]
+    batch_box = np.reshape(batch_box, (rois_num, -1))
     # get gt category
     batch_categories = np.zeros((rois_num, 200, 1))
     for i in range(rois_num):
         batch_categories[i, category] = 1 
     batch_categories = np.reshape(batch_categories, (rois_num, -1))
-    return rois, batch_rois, batch_categories
+    return rois, batch_box, batch_categories
 
 ILSVRC_dataset_path='/home/jk/faster_rcnn/'
 img_path=ILSVRC_dataset_path+'Data/DET/train/'
@@ -185,7 +186,6 @@ from multiprocessing import Process, Queue
 # BATCH_SIZE=2048
 def worker(path, q):
     print('worker start ' + path)
-    batch_featuremaps=[]
     batch_rois=[]
     batch_featuremap_inds=[]
     batch_categories=[]
@@ -213,31 +213,28 @@ def worker(path, q):
                         print('parse label or produce batch failed: for: '+line.split()[0])
                         traceback.print_exc()
                         continue
+                    if len(rois) <= 0 :
+                        continue
+
                     for i in range(len(rois)):
-                        if(len(batch_rois)==BATCH):
-                            a=np.asarray(batch_featuremaps)
-                            b=np.asarray(batch_rois)
-                            c=np.asarray(batch_featuremap_inds)
-                            d=np.asarray(batch_categories)
-                            e=np.asarray(batch_bboxes)
-                            if not a.any() or not b.any() or not c.any()\
-                                    or not d.any() or not e.any():
-                                print("empty array found.")
-                            # q.put([a,b,c,d,e])
-                            yield [a,b,c], [d,e]
-                            batch_featuremaps=[]
-                            batch_rois=[]
-                            batch_featuremap_inds=[]
-                            batch_categories=[]
-                            batch_bboxes=[]
-                            fc_index=0
                         batch_rois.append(rois[i])
                         batch_featuremap_inds.append(fc_index)
                         batch_categories.append(categories[i])
                         batch_bboxes.append(bboxes[i])
-                    if len(rois) > 0:
-                        batch_featuremaps.append(feature_map.squeeze(axis=0))
-                        fc_index+=1
+                    a=feature_map
+                    b=np.asarray(batch_rois)
+                    c=np.asarray(batch_featuremap_inds)
+                    d=np.asarray(batch_categories)
+                    e=np.asarray(batch_bboxes)
+                    f=np.zeros((len(rois),a.shape[1],a.shape[2],a.shape[3]))
+                    f[0]=feature_map[0]
+                    yield [f,b,c], [d,e]
+                    batch_rois=[]
+                    batch_featuremap_inds=[]
+                    batch_categories=[]
+                    batch_bboxes=[]
+                    fc_index=0
+
 
 
 q = Queue(20)
