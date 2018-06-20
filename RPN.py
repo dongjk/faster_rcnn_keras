@@ -115,10 +115,6 @@ def produce_batch(filepath, gt_boxes, scale):
     # subsample positive labels if we have too many
 #     num_fg = int(RPN_FG_FRACTION * RPN_BATCHSIZE)
     fg_inds = np.where(labels == 1)[0]
-#     if len(fg_inds) > num_fg:
-#         disable_inds = npr.choice(
-#             fg_inds, size=(len(fg_inds) - num_fg), replace=False)
-#         labels[disable_inds] = -1
     # subsample negative labels if we have too many
     num_bg = int(len(fg_inds) * BG_FG_FRAC)
     bg_inds = np.where(labels == 0)[0]
@@ -147,6 +143,9 @@ def produce_batch(filepath, gt_boxes, scale):
         batch_tiles.append(fc_3x3)
     return np.asarray(batch_tiles), batch_label_targets.tolist(), batch_bbox_targets.tolist()
 
+
+
+##################  generate data  #######################
 ILSVRC_dataset_path='/home/jk/wi/ILSVRC/'
 img_path=ILSVRC_dataset_path+'Data/DET/train/'
 anno_path=ILSVRC_dataset_path+'/Annotations/DET/train/'
@@ -189,6 +188,7 @@ def input_generator():
                                 batch_bboxes=[]
 
 
+##################   start train   #######################
 from keras.callbacks import ModelCheckpoint
 checkpointer = ModelCheckpoint(filepath='./weights.hdf5', verbose=1, save_best_only=True)
 model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=800, callbacks=[checkpointer])
