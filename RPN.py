@@ -193,5 +193,5 @@ def input_generator():
 ##################   start train   #######################
 from keras.callbacks import ModelCheckpoint
 checkpointer = ModelCheckpoint(filepath='./weights.hdf5', verbose=1, save_best_only=True)
-model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=800, callbacks=[checkpointer])[root@ubuntu1 faster_rcnn_keras]
+model.fit_generator(input_generator(), steps_per_epoch=1000, epochs=800, callbacks=[checkpointer])
 
