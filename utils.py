@@ -41,7 +41,7 @@ def parse_label(xml_file):
     for x in root.iter('ymax'):
         ymax.append(int(x.text)*h_scale)
     gt_boxes=[list(box) for box in zip(xmin,ymin,xmax,ymax)]
-    return category, np.asarray(gt_boxes, np.float), (height, width)
+    return category, np.asarray(gt_boxes, np.float), (h_scale,w_scale)
 
 
 def loss_cls(y_true, y_pred):
